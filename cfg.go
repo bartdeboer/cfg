@@ -3,7 +3,9 @@ package cfg
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 
 	"github.com/iancoleman/strcase"
 	"github.com/imdario/mergo"
@@ -159,10 +161,17 @@ func initConfig() {
 			os.Exit(1)
 		}
 
-		// Search config in home directory with name ".mw" (without extension).
+		exec, err := os.Executable()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		name := strings.TrimSuffix(filepath.Base(exec), (".exe"))
+
 		viper.AddConfigPath(home)
 		viper.AddConfigPath(".")
-		viper.SetConfigName(".mw")
+		viper.SetConfigName("." + name)
 	}
 
 	viper.AutomaticEnv() // read in environment variables that match
