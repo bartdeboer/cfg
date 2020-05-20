@@ -121,6 +121,13 @@ func createFlags(flags *pflag.FlagSet, rawVal interface{}) {
 				fv.Interface().(string),
 				ft.Tag.Get("usage"))
 			break
+		case reflect.Float64:
+			flags.Float64VarP(
+				fv.Addr().Interface().(*float64),
+				flagName, "",
+				fv.Interface().(float64),
+				ft.Tag.Get("usage"))
+			break
 		case reflect.Int:
 			flags.IntVarP(
 				fv.Addr().Interface().(*int),
