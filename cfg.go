@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/iancoleman/strcase"
 	"github.com/imdario/mergo"
@@ -19,25 +20,40 @@ import (
 	"github.com/spf13/viper"
 )
 
-var cfgFile string
-var isInitialized bool
+func Get(key string) interface{} {
+	initConfig()
+	return viper.Get(key)
+}
+
+func GetInt(key string) int {
+	initConfig()
+	return viper.GetInt(key)
+}
+
+func GetString(key string) string {
+	initConfig()
+	return viper.GetString(key)
+}
+
+func ReadInConfig() {
+	initConfig()
+}
 
 func Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
 	initConfig()
+	curVal := getPtrValue(rawVal)
+	if err := viper.Unmarshal(rawVal, opts...); err != nil {
+		return err
+	}
+	if err := mergo.MergeWithOverwrite(rawVal, curVal); err != nil {
+		return err
+	}
 	return viper.Unmarshal(rawVal, opts...)
 }
 
 func UnmarshalKey(key string, rawVal interface{}, opts ...viper.DecoderConfigOption) error {
 	initConfig()
-	rvp := reflect.ValueOf(rawVal)
-	if k := rvp.Kind(); k != reflect.Ptr {
-		panic("Value is not a pointer")
-	}
-	rv := rvp.Elem() // struct value from pointer
-	if k := rv.Kind(); k != reflect.Struct {
-		panic("Value is not a struct")
-	}
-	curVal := rv.Interface() // Get real value of Value
+	curVal := getPtrValue(rawVal)
 	if err := viper.UnmarshalKey(key, rawVal, opts...); err != nil {
 		return err
 	}
@@ -47,29 +63,70 @@ func UnmarshalKey(key string, rawVal interface{}, opts ...viper.DecoderConfigOpt
 	return nil
 }
 
-func BindPersistentFlags(c *cobra.Command, key string, rawVal interface{}) {
-	BindCommandFlags(c, c.PersistentFlags(), key, rawVal)
-}
-
-func BindFlags(c *cobra.Command, key string, rawVal interface{}) {
-	BindCommandFlags(c, c.Flags(), key, rawVal)
-}
-
-func BindCommandFlags(c *cobra.Command, flags *pflag.FlagSet, key string, rawVal interface{}) {
-	createFlags(flags, rawVal)
-	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		UnmarshalKey(key, rawVal)
-		updateFlags(flags, rawVal)
+func getPtrValue(i interface{}) interface{} {
+	rvp := reflect.ValueOf(i)
+	if k := rvp.Kind(); k != reflect.Ptr {
+		panic("Value is not a pointer")
 	}
-	helpFunc := c.HelpFunc()
-	c.SetHelpFunc(func(cmd *cobra.Command, s []string) {
-		UnmarshalKey(key, rawVal)
-		updateFlags(flags, rawVal)
-		helpFunc(cmd, s)
+	rv := rvp.Elem() // struct value from pointer
+	if k := rv.Kind(); k != reflect.Struct {
+		panic("Value is not a struct")
+	}
+	return rv.Interface() // Get real value of Value
+}
+
+func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
+	flags := c.PersistentFlags()
+	createFlags(flags, rawVal)
+	SetCommandHooks(c, func() {
+		Unmarshal(rawVal)
+		setFlagDefaults(flags, rawVal)
 	})
 }
 
-func updateFlags(flags *pflag.FlagSet, rawVal interface{}) {
+func BindFlags(c *cobra.Command, rawVal interface{}) {
+	flags := c.Flags()
+	createFlags(flags, rawVal)
+	SetCommandHooks(c, func() {
+		Unmarshal(rawVal)
+		setFlagDefaults(flags, rawVal)
+	})
+}
+
+func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
+	flags := c.PersistentFlags()
+	createFlags(flags, rawVal)
+	SetCommandHooks(c, func() {
+		UnmarshalKey(key, rawVal)
+		setFlagDefaults(flags, rawVal)
+	})
+}
+
+func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
+	flags := c.Flags()
+	createFlags(flags, rawVal)
+	SetCommandHooks(c, func() {
+		UnmarshalKey(key, rawVal)
+		setFlagDefaults(flags, rawVal)
+	})
+}
+
+func SetCommandHooks(c *cobra.Command, hooks ...func()) {
+	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		for _, hook := range hooks {
+			hook()
+		}
+	}
+	helpFunc := c.HelpFunc()
+	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		for _, hook := range hooks {
+			hook()
+		}
+		helpFunc(cmd, args)
+	})
+}
+
+func setFlagDefaults(flags *pflag.FlagSet, rawVal interface{}) {
 	rvp := reflect.ValueOf(rawVal) // pointer struct value
 	rtp := reflect.TypeOf(rawVal)  // pointer struct type
 	if k := rvp.Kind(); k != reflect.Ptr {
@@ -139,32 +196,17 @@ func createFlags(flags *pflag.FlagSet, rawVal interface{}) {
 	}
 }
 
-func Get(key string) interface{} {
-	return viper.Get(key)
-}
-
-func GetInt(key string) int {
-	return viper.GetInt(key)
-}
-
-func GetString(key string) string {
-	return viper.GetString(key)
-}
-
-func ReadInConfig() {
-	initConfig()
-}
+var once sync.Once
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
-	if isInitialized {
-		return
-	}
-	isInitialized = true
-	if cfgFile != "" {
-		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
-	} else {
+	once.Do(func() {
+		// if cfgFile != "" {
+		// 	// Use config file from the flag.
+		// 	viper.SetConfigFile(cfgFile)
+		// 	return
+		// }
+
 		// Find home directory.
 		home, err := homedir.Dir()
 		if err != nil {
@@ -183,12 +225,19 @@ func initConfig() {
 		viper.AddConfigPath(home)
 		viper.AddConfigPath(".")
 		viper.SetConfigName("." + name)
-	}
+		viper.AutomaticEnv() // read in environment variables that match
 
-	viper.AutomaticEnv() // read in environment variables that match
+		// If a config file is found, read it in.
+		if err := viper.ReadInConfig(); err == nil {
+			fmt.Println("Using config file:", viper.ConfigFileUsed())
+		}
+	})
+}
 
-	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
+func WriteConfig() error {
+	if err := viper.WriteConfig(); err != nil {
+		return err
 	}
+	fmt.Println("Writing config:", viper.ConfigFileUsed())
+	return nil
 }
