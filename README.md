@@ -23,10 +23,10 @@ And resolves them into a struct with initial values:
 package cmd
 
 import (
-	"fmt"
+    "fmt"
 
-	"github.com/bartdeboer/cfg"
-	"github.com/spf13/cobra"
+    "github.com/bartdeboer/cfg"
+    "github.com/spf13/cobra"
 )
 
 type Config struct {
@@ -38,7 +38,7 @@ type Config struct {
 var initial Config
 
 var rootCmd = &cobra.Command{
-	Use:   "root",
+    Use:   "root",
     Short: "A brief description of your application",
     Run: func(cmd *cobra.Command, args []string) {
         fmt.Println(initial.FirstVar) // returns Override1
@@ -48,7 +48,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	cfg.BindPersistentFlagsKey("root", rootCmd, &initial)
+    cfg.BindPersistentFlagsKey("root", rootCmd, &initial)
 }
 ```
 

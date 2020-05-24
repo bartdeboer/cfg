@@ -40,6 +40,7 @@ func ReadInConfig() {
 }
 
 func Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
+	fmt.Printf("Unmarshal\n")
 	initConfig()
 	curVal := getPtrValue(rawVal)
 	if err := viper.Unmarshal(rawVal, opts...); err != nil {
@@ -52,6 +53,7 @@ func Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
 }
 
 func UnmarshalKey(key string, rawVal interface{}, opts ...viper.DecoderConfigOption) error {
+	fmt.Printf("UnmarshalKey for %s\n", key)
 	initConfig()
 	curVal := getPtrValue(rawVal)
 	if err := viper.UnmarshalKey(key, rawVal, opts...); err != nil {
@@ -76,6 +78,7 @@ func getPtrValue(i interface{}) interface{} {
 }
 
 func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
+	fmt.Printf("BindPersistentFlags for %s\n", c.Use)
 	flags := c.PersistentFlags()
 	createFlags(flags, rawVal)
 	SetCommandHooks(c, func() {
@@ -85,6 +88,7 @@ func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
 }
 
 func BindFlags(c *cobra.Command, rawVal interface{}) {
+	fmt.Printf("BindFlags for %s\n", c.Use)
 	flags := c.Flags()
 	createFlags(flags, rawVal)
 	SetCommandHooks(c, func() {
@@ -94,6 +98,7 @@ func BindFlags(c *cobra.Command, rawVal interface{}) {
 }
 
 func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
+	fmt.Printf("BindPersistentFlagsKey for %s\n", c.Use)
 	flags := c.PersistentFlags()
 	createFlags(flags, rawVal)
 	SetCommandHooks(c, func() {
@@ -103,6 +108,7 @@ func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 }
 
 func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
+	fmt.Printf("BindFlagsKey for %s\n", c.Use)
 	flags := c.Flags()
 	createFlags(flags, rawVal)
 	SetCommandHooks(c, func() {
@@ -111,17 +117,58 @@ func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 	})
 }
 
+// func getPersistentPreRunChain(c *cobra.Command) []func(c *cobra.Command, args []string) {
+// 	chain := []func(c *cobra.Command, args []string){}
+// 	for p := c; p != nil; p = p.Parent() {
+// 		if p.PersistentPreRun != nil {
+// 			chain = append([]func(c *cobra.Command, args []string){p.PersistentPreRun}, chain...)
+// 		}
+// 	}
+// 	return chain
+// }
+
+func runPersistentPreRunChain(c *cobra.Command) {
+	chain := []func(cmd *cobra.Command, args []string){}
+	for p := c.Parent(); p != nil; p = p.Parent() {
+		if p.PersistentPreRun != nil {
+			chain = append(chain, p.PersistentPreRun)
+		}
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		chain[i](c, []string{})
+	}
+}
+
 func SetCommandHooks(c *cobra.Command, hooks ...func()) {
+	fmt.Printf("Set hooks for %s\n", c.Use)
+
 	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		fmt.Printf("PersistentPreRun for %s\n", cmd.Use)
+	}
+	c.PreRun = func(cmd *cobra.Command, args []string) {
+		fmt.Printf("PreRun for %s\n", cmd.Use)
+	}
+	c.Run = func(cmd *cobra.Command, args []string) {
+		fmt.Printf("Run for %s\n", cmd.Use)
+	}
+	c.PostRun = func(cmd *cobra.Command, args []string) {
+		fmt.Printf("PostRun for %s\n", cmd.Use)
+	}
+	c.PersistentPostRun = func(cmd *cobra.Command, args []string) {
+		fmt.Printf("PersistentPostRun for %s\n", cmd.Use)
+	}
+
+	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		fmt.Printf("PersistentPreRun hooks for %s\n", cmd.Use)
+		runPersistentPreRunChain(cmd)
 		for _, hook := range hooks {
 			hook()
 		}
 	}
+
 	helpFunc := c.HelpFunc()
 	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		for _, hook := range hooks {
-			hook()
-		}
+		c.PersistentPreRun(cmd, args)
 		helpFunc(cmd, args)
 	})
 }
@@ -201,6 +248,7 @@ var once sync.Once
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	once.Do(func() {
+		fmt.Printf("initConfig\n")
 		// if cfgFile != "" {
 		// 	// Use config file from the flag.
 		// 	viper.SetConfigFile(cfgFile)
