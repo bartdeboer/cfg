@@ -9,22 +9,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-type rootStruct struct {
-	FirstParam  string
-	SecondParam string
-	ThirdParam  bool
-}
-
-var rootConfig rootStruct
-
-type child2Struct struct {
-	FourthParam bool
-	FifthParam  int
-	SixthParam  string
-}
-
-var child2Config child2Struct
-
 var yamlExample = []byte(`
 firstparam: First
 SecondParam: Second
@@ -33,6 +17,17 @@ Nested:
    FifthParam: 78
    SixthParam: Sixth
 ThirdParam: false
+CollectionSelectedItem: SecondItem
+collection:
+ - seventhParam: false
+   eighthParam: FirstEighth
+   name: FirstItem
+ - seventhParam: true
+   eighthParam: SecondEighth
+   name: SecondItem
+ - seventhParam: false
+   eighthParam: ThirdEighth
+   name: ThirdItem
 `)
 
 func executeCommandC(root *cobra.Command, args ...string) (c *cobra.Command, output string, err error) {
@@ -60,7 +55,24 @@ func init() {
 	}
 }
 
+type rootStruct struct {
+	FirstParam  string
+	SecondParam string
+	ThirdParam  bool
+}
+
+type child2Struct struct {
+	FourthParam bool
+	FifthParam  int
+	SixthParam  string
+}
+
 func TestRunBoundCommand(t *testing.T) {
+
+	var (
+		rootConfig   rootStruct
+		child2Config child2Struct
+	)
 
 	rootCmd := &cobra.Command{
 		Use: "root",
@@ -86,8 +98,8 @@ func TestRunBoundCommand(t *testing.T) {
 	rootCmd.AddCommand(child1Cmd)
 	child1Cmd.AddCommand(child2Cmd)
 
-	BindCobraPersistentFlags(rootCmd, &rootConfig)
-	BindCobraPersistentFlagsKey("nested", child2Cmd, &child2Config)
+	BindPersistentFlags(rootCmd, &rootConfig)
+	BindPersistentFlagsKey("nested", child2Cmd, &child2Config)
 
 	output, err := executeCommand(rootCmd, "child1", "child2", "--fifth-param", "102", "--second-param", "SecondFlag")
 
@@ -117,5 +129,84 @@ func TestRunBoundCommand(t *testing.T) {
 
 	if child2Config != child2Test {
 		t.Errorf("\ngot:  %v\nwant: %v\n", child2Config, child2Test)
+	}
+}
+
+type collRootStruct struct {
+	FirstParam             string
+	SecondParam            string
+	ThirdParam             bool
+	CollectionSelectedItem string
+}
+
+type itemStruct struct {
+	SeventhParam bool
+	EighthParam  string
+	Name         string
+}
+
+func TestRunBoundCollectionCommand(t *testing.T) {
+
+	var (
+		rootConfig collRootStruct
+		itemConfig itemStruct
+	)
+
+	rootCmd := &cobra.Command{
+		Use: "root",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Println("Running root")
+		},
+	}
+
+	child1Cmd := &cobra.Command{
+		Use: "child1",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Println("Running child1")
+		},
+	}
+
+	child2Cmd := &cobra.Command{
+		Use: "child2",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Println("Running child2")
+		},
+	}
+
+	rootCmd.AddCommand(child1Cmd)
+	child1Cmd.AddCommand(child2Cmd)
+
+	BindPersistentFlags(rootCmd, &rootConfig)
+	BindPersistentFlagsCollection("collection", "CollectionSelectedItem", child2Cmd, &itemConfig)
+
+	output, err := executeCommand(rootCmd, "child1", "child2", "--eighth-param", "SecondEighthFlag", "--second-param", "SecondFlag")
+
+	if output != "" {
+		t.Errorf("Unexpected output: %v", output)
+	}
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	rootTest := collRootStruct{
+		FirstParam:             "First",
+		SecondParam:            "SecondFlag",
+		ThirdParam:             false,
+		CollectionSelectedItem: "SecondItem",
+	}
+
+	itemTest := itemStruct{
+		SeventhParam: true,
+		EighthParam:  "SecondEighthFlag",
+		Name:         "SecondItem",
+	}
+
+	if rootConfig != rootTest {
+		t.Errorf("\ngot:  %v\nwant: %v\n", rootConfig, rootTest)
+	}
+
+	if itemConfig != itemTest {
+		t.Errorf("\ngot:  %v\nwant: %v\n", itemConfig, itemTest)
 	}
 }

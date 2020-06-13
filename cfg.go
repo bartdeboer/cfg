@@ -15,6 +15,7 @@ import (
 	"github.com/iancoleman/strcase"
 	"github.com/imdario/mergo"
 	homedir "github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -72,50 +73,26 @@ func getPtrValue(i interface{}) interface{} {
 		panic("Value is not a pointer")
 	}
 	rv := rvp.Elem() // struct value from pointer
-	if k := rv.Kind(); k != reflect.Struct {
-		panic("Value is not a struct")
+	if k := rv.Kind(); k != reflect.Struct && k != reflect.Slice {
+		panic("Value is not a struct or slice")
 	}
 	return rv.Interface() // Get real value of Value
 }
 
-// BindCobraFlags binds a Struct with a viper config when running a Cobra command.
-// Generates Cobra flags for the Struct so they can be overriden.
-func BindCobraFlags(c *cobra.Command, rawVal interface{}) {
-	flags := c.Flags()
-	createFlags(flags, rawVal)
+func bindCFlags(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func()) {
+	createFlags(f, s)
 	c.PreRun = func(cmd *cobra.Command, args []string) {
-		Unmarshal(rawVal)
-		setFlagDefaults(flags, rawVal)
+		h()
 	}
 	helpFunc := c.HelpFunc()
 	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		c.PersistentPreRun(cmd, args)
+		c.PreRun(cmd, args)
 		helpFunc(cmd, args)
 	})
 }
 
-// BindCobraFlagsKey binds a Struct with a viper config at a specific key when running a Cobra command.
-// Generates Cobra flags for the struct so they can be overriden
-func BindCobraFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
-	flags := c.Flags()
-	createFlags(flags, rawVal)
-	c.PreRun = func(cmd *cobra.Command, args []string) {
-		UnmarshalKey(key, rawVal)
-		setFlagDefaults(flags, rawVal)
-	}
-	helpFunc := c.HelpFunc()
-	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		c.PersistentPreRun(cmd, args)
-		helpFunc(cmd, args)
-	})
-}
-
-// BindCobraPersistentFlags persistently binds a Struct with a viper config when running a Cobra command.
-// Generates persistent flags for the struct so they can be overriden.
-// Runs the parent persistent hooks as well.
-func BindCobraPersistentFlags(c *cobra.Command, rawVal interface{}) {
-	flags := c.PersistentFlags()
-	createFlags(flags, rawVal)
+func bindCFlagsPersistent(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func()) {
+	createFlags(f, s)
 	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		// first run all the parents
 		for p := cmd.Parent(); p != nil; p = p.Parent() {
@@ -124,8 +101,7 @@ func BindCobraPersistentFlags(c *cobra.Command, rawVal interface{}) {
 				break
 			}
 		}
-		Unmarshal(rawVal)
-		setFlagDefaults(flags, rawVal)
+		h()
 	}
 	helpFunc := c.HelpFunc()
 	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
@@ -134,25 +110,69 @@ func BindCobraPersistentFlags(c *cobra.Command, rawVal interface{}) {
 	})
 }
 
+// BindCobraFlags binds a Struct with a viper config when running a Cobra command.
+// Generates Cobra flags for the Struct so they can be overriden.
+func BindFlags(c *cobra.Command, rawVal interface{}) {
+	f := c.Flags()
+	bindCFlags(c, f, rawVal, func() {
+		Unmarshal(rawVal)
+		setFlagDefaults(f, rawVal)
+	})
+}
+
+// BindCobraFlagsKey binds a Struct with a viper config at a specific key when running a Cobra command.
+// Generates Cobra flags for the struct so they can be overriden
+func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
+	f := c.Flags()
+	bindCFlags(c, f, rawVal, func() {
+		UnmarshalKey(key, rawVal)
+		setFlagDefaults(f, rawVal)
+	})
+}
+
+// BindCobraPersistentFlags persistently binds a Struct with a viper config when running a Cobra command.
+// Generates persistent flags for the struct so they can be overriden.
+// Runs the parent persistent hooks as well.
+func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
+	f := c.PersistentFlags()
+	bindCFlagsPersistent(c, f, rawVal, func() {
+		Unmarshal(rawVal)
+		setFlagDefaults(f, rawVal)
+	})
+}
+
 // BindCobraFlagsKeyKey persistently binds a Struct with a viper config at a specific key when running a Cobra command.
 // Generates persistent flags for the struct so they can be overriden
-func BindCobraPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
-	flags := c.PersistentFlags()
-	createFlags(flags, rawVal)
-	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		for p := c.Parent(); p != nil; p = p.Parent() {
-			if p.PersistentPreRun != nil {
-				p.PersistentPreRun(cmd, args)
-				break
+func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
+	f := c.PersistentFlags()
+	bindCFlagsPersistent(c, f, rawVal, func() {
+		UnmarshalKey(key, rawVal)
+		setFlagDefaults(f, rawVal)
+	})
+}
+
+// BindCobraFlagsKeyKey persistently binds a Struct with a viper config at a specific array with dynamic key when running a Cobra command.
+// Generates persistent flags for the struct so they can be overriden
+func BindPersistentFlagsCollection(colKey string, keyKey string, c *cobra.Command, rawVal interface{}) {
+	f := c.PersistentFlags()
+	bindCFlagsPersistent(c, f, rawVal, func() {
+		var coll []map[string]interface{}
+		key := viper.GetString(keyKey)
+		UnmarshalKey(colKey, &coll)
+		for i := 0; i < len(coll); i++ {
+			if val, ok := coll[i]["name"]; ok {
+				if val.(string) == key {
+					curVal := getPtrValue(rawVal)
+					if err := mapstructure.Decode(coll[i], rawVal); err != nil {
+						panic(err)
+					}
+					if err := mergo.MergeWithOverwrite(rawVal, curVal); err != nil {
+						panic(err)
+					}
+					return
+				}
 			}
 		}
-		UnmarshalKey(key, rawVal)
-		setFlagDefaults(flags, rawVal)
-	}
-	helpFunc := c.HelpFunc()
-	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		c.PersistentPreRun(cmd, args)
-		helpFunc(cmd, args)
 	})
 }
 
