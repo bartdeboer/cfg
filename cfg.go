@@ -36,6 +36,10 @@ func GetString(key string) string {
 	return viper.GetString(key)
 }
 
+func Set(key string, value interface{}) {
+	viper.Set(key, value)
+}
+
 func ReadInConfig() {
 	initConfig()
 }
@@ -157,7 +161,7 @@ func BindPersistentFlagsCollection(colKey string, keyKey string, c *cobra.Comman
 	f := c.PersistentFlags()
 	bindCFlagsPersistent(c, f, rawVal, func() {
 		var coll []map[string]interface{}
-		key := viper.GetString(keyKey)
+		key := GetString(keyKey)
 		UnmarshalKey(colKey, &coll)
 		for i := 0; i < len(coll); i++ {
 			if val, ok := coll[i]["name"]; ok {
@@ -280,10 +284,6 @@ var once sync.Once
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	once.Do(ConfigLoader)
-}
-
-func Set(key string, value interface{}) {
-	viper.Set(key, value)
 }
 
 func Write() error {
