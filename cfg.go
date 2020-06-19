@@ -22,17 +22,17 @@ import (
 )
 
 func Get(key string) interface{} {
-	initConfig()
+	loadConfig()
 	return viper.Get(key)
 }
 
 func GetInt(key string) int {
-	initConfig()
+	loadConfig()
 	return viper.GetInt(key)
 }
 
 func GetString(key string) string {
-	initConfig()
+	loadConfig()
 	return viper.GetString(key)
 }
 
@@ -41,12 +41,12 @@ func Set(key string, value interface{}) {
 }
 
 func ReadInConfig() {
-	initConfig()
+	loadConfig()
 }
 
 // Unmashal unmarshals the config into a Struct overriding with any flags that are set
 func Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
-	initConfig()
+	loadConfig()
 	curVal := getPtrValue(rawVal)
 	if err := viper.Unmarshal(rawVal, opts...); err != nil {
 		return err
@@ -59,7 +59,7 @@ func Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
 
 // Unmashal takes a single key and unmarshals it into a Struct overriding with any flags that are set
 func UnmarshalKey(key string, rawVal interface{}, opts ...viper.DecoderConfigOption) error {
-	initConfig()
+	loadConfig()
 	curVal := getPtrValue(rawVal)
 	if err := viper.UnmarshalKey(key, rawVal, opts...); err != nil {
 		return err
@@ -83,11 +83,140 @@ func getPtrValue(i interface{}) interface{} {
 	return rv.Interface() // Get real value of Value
 }
 
-func bindCFlags(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func()) {
-	createFlags(f, s)
-	c.PreRun = func(cmd *cobra.Command, args []string) {
-		h()
+type commandHook struct {
+	cmd  *cobra.Command
+	hook func(cmd *cobra.Command, args []string) error
+}
+
+var (
+	preRunHooks            []*commandHook
+	persistentPreRunHooks  []*commandHook
+	runHooks               []*commandHook
+	persistentPostRunHooks []*commandHook
+	postRunHooks           []*commandHook
+)
+
+// RegisterRunHookE allows to register multiple Run hooks onto the command.
+func RegisterRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
+	// Register the hook
+	runHooks = append(runHooks, &commandHook{
+		cmd:  c,
+		hook: h,
+	})
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		// find and execute any registered Run hooks
+		for _, ch := range runHooks {
+			if ch.cmd == cmd {
+				if err := ch.hook(cmd, args); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
+}
+
+// RegisterPreRunHookE allows to register multiple PreRunE hooks onto the command.
+func RegisterPreRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
+	// Register the hook
+	preRunHooks = append(preRunHooks, &commandHook{
+		cmd:  c,
+		hook: h,
+	})
+	c.PreRunE = func(cmd *cobra.Command, args []string) error {
+		// find and execute any registered PreRun hooks
+		for _, ch := range preRunHooks {
+			if ch.cmd == cmd {
+				if err := ch.hook(cmd, args); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+}
+
+// RegisterPostRunHookE allows to register multiple PostRunE hooks onto the command.
+func RegisterPostRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
+	// Register the hook
+	postRunHooks = append(postRunHooks, &commandHook{
+		cmd:  c,
+		hook: h,
+	})
+	c.PostRunE = func(cmd *cobra.Command, args []string) error {
+		// find and execute any registered PreRun hooks
+		for _, ch := range postRunHooks {
+			if ch.cmd == cmd {
+				if err := ch.hook(cmd, args); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+}
+
+// RegisterPersistentPreRunHookE allows to register multiple PersistentPreRunE hooks onto the command
+// ensuring all of them will be run throughout the command chain that is currently executed.
+// This method allows different parts of the code to have their own concern about attaching behavior.
+// Only hooks defined via RegisterPersistentPreRunHookE will be handled. Any other PersistentPreRunE
+// functions will be ignored ensuring the behavior to be non-intrusive.
+func RegisterPersistentPreRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
+	// Register the hook
+	persistentPreRunHooks = append(persistentPreRunHooks, &commandHook{
+		cmd:  c,
+		hook: h,
+	})
+	c.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		var runChain []*commandHook
+		for p := cmd; p != nil; p = p.Parent() {
+			for _, ch := range persistentPreRunHooks {
+				// find any registered PersistentPreRun hooks and build the run chain
+				if ch.cmd == p {
+					runChain = append(runChain, &commandHook{
+						hook: ch.hook,
+					})
+				}
+			}
+		}
+		// Run the command chain hooks from parent to child
+		for i := len(runChain) - 1; i >= 0; i-- {
+			if err := runChain[i].hook(cmd, args); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// RegisterPersistentPostRunHookE allows to register multiple PersistentPostRunE hooks onto the command
+// ensuring all of them will be run throughout the command chain that is currently executed.
+// This method allows different parts of the code to have their own concern about attaching behavior.
+// Only hooks defined via RegisterPersistentPostRunHookE will be handled. Any other PersistentPostRunE
+// functions will be ignored ensuring non-intrusive behavior.
+func RegisterPersistentPostRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
+	// Register the hook
+	persistentPostRunHooks = append(persistentPostRunHooks, &commandHook{
+		cmd:  c,
+		hook: h,
+	})
+	c.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
+		// Walk up the command chain
+		for p := cmd; p != nil; p = p.Parent() {
+			// find and execute any registered PostRun hooks
+			for _, ch := range persistentPostRunHooks {
+				if ch.cmd == p {
+					if err := ch.hook(cmd, args); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	}
+}
+
+func RunPreRunOnHelp(c *cobra.Command) {
 	helpFunc := c.HelpFunc()
 	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		c.PreRun(cmd, args)
@@ -95,18 +224,29 @@ func bindCFlags(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func()) {
 	})
 }
 
-func bindCFlagsPersistent(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func()) {
+func RunPersistentPreRunOnHelp(c *cobra.Command) {
+	helpFunc := c.HelpFunc()
+	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		c.PersistentPreRun(cmd, args)
+		helpFunc(cmd, args)
+	})
+}
+
+func bindCFlags(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func(cmd *cobra.Command, args []string) error) {
 	createFlags(f, s)
-	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		// first run all the parents
-		for p := cmd.Parent(); p != nil; p = p.Parent() {
-			if p.PersistentPreRun != nil {
-				p.PersistentPreRun(p, args)
-				break
-			}
-		}
-		h()
-	}
+	RegisterPreRunHookE(c, h)
+	helpFunc := c.HelpFunc()
+	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		c.PreRun(cmd, args)
+		helpFunc(cmd, args)
+	})
+}
+
+// bindCFlagsPersistent generates the flags to be bound to the struct and
+// registers the PreRun hook within the command PreRun chain
+func bindCFlagsPersistent(c *cobra.Command, f *pflag.FlagSet, s interface{}, h func(cmd *cobra.Command, args []string) error) {
+	createFlags(f, s)
+	RegisterPersistentPreRunHookE(c, h)
 	helpFunc := c.HelpFunc()
 	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		c.PersistentPreRun(cmd, args)
@@ -118,9 +258,10 @@ func bindCFlagsPersistent(c *cobra.Command, f *pflag.FlagSet, s interface{}, h f
 // Generates Cobra flags for the Struct so they can be overriden.
 func BindFlags(c *cobra.Command, rawVal interface{}) {
 	f := c.Flags()
-	bindCFlags(c, f, rawVal, func() {
+	bindCFlags(c, f, rawVal, func(cmd *cobra.Command, args []string) error {
 		Unmarshal(rawVal)
 		setFlagDefaults(f, rawVal)
+		return nil
 	})
 }
 
@@ -128,9 +269,10 @@ func BindFlags(c *cobra.Command, rawVal interface{}) {
 // Generates Cobra flags for the struct so they can be overriden
 func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 	f := c.Flags()
-	bindCFlags(c, f, rawVal, func() {
+	bindCFlags(c, f, rawVal, func(cmd *cobra.Command, args []string) error {
 		UnmarshalKey(key, rawVal)
 		setFlagDefaults(f, rawVal)
+		return nil
 	})
 }
 
@@ -139,9 +281,10 @@ func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 // Runs the parent persistent hooks as well.
 func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
 	f := c.PersistentFlags()
-	bindCFlagsPersistent(c, f, rawVal, func() {
+	bindCFlagsPersistent(c, f, rawVal, func(cmd *cobra.Command, args []string) error {
 		Unmarshal(rawVal)
 		setFlagDefaults(f, rawVal)
+		return nil
 	})
 }
 
@@ -149,9 +292,10 @@ func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
 // Generates persistent flags for the struct so they can be overriden
 func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 	f := c.PersistentFlags()
-	bindCFlagsPersistent(c, f, rawVal, func() {
+	bindCFlagsPersistent(c, f, rawVal, func(cmd *cobra.Command, args []string) error {
 		UnmarshalKey(key, rawVal)
 		setFlagDefaults(f, rawVal)
+		return nil
 	})
 }
 
@@ -159,7 +303,7 @@ func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 // Generates persistent flags for the struct so they can be overriden
 func BindPersistentFlagsCollection(colKey string, keyKey string, c *cobra.Command, rawVal interface{}) {
 	f := c.PersistentFlags()
-	bindCFlagsPersistent(c, f, rawVal, func() {
+	bindCFlagsPersistent(c, f, rawVal, func(cmd *cobra.Command, args []string) error {
 		var coll []map[string]interface{}
 		key := GetString(keyKey)
 		UnmarshalKey(colKey, &coll)
@@ -168,15 +312,16 @@ func BindPersistentFlagsCollection(colKey string, keyKey string, c *cobra.Comman
 				if val.(string) == key {
 					curVal := getPtrValue(rawVal)
 					if err := mapstructure.Decode(coll[i], rawVal); err != nil {
-						panic(err)
+						return err
 					}
 					if err := mergo.MergeWithOverwrite(rawVal, curVal); err != nil {
-						panic(err)
+						return err
 					}
-					return
+					return nil
 				}
 			}
 		}
+		return nil
 	})
 }
 
@@ -282,7 +427,7 @@ var ConfigLoader = func() {
 var once sync.Once
 
 // initConfig reads in config file and ENV variables if set.
-func initConfig() {
+func loadConfig() {
 	once.Do(ConfigLoader)
 }
 

@@ -28,6 +28,8 @@ collection:
  - seventhParam: false
    eighthParam: ThirdEighth
    name: ThirdItem
+ninthParam: Ninth
+tenthParam: 9
 `)
 
 func executeCommandC(root *cobra.Command, args ...string) (c *cobra.Command, output string, err error) {
@@ -61,6 +63,11 @@ type rootStruct struct {
 	ThirdParam  bool
 }
 
+type rootStruct2 struct {
+	NinthParam string
+	TenthParam int
+}
+
 type child2Struct struct {
 	FourthParam bool
 	FifthParam  int
@@ -71,6 +78,7 @@ func TestRunBoundCommand(t *testing.T) {
 
 	var (
 		rootConfig   rootStruct
+		rootConfig2  rootStruct2
 		child2Config child2Struct
 	)
 
@@ -99,9 +107,10 @@ func TestRunBoundCommand(t *testing.T) {
 	child1Cmd.AddCommand(child2Cmd)
 
 	BindPersistentFlags(rootCmd, &rootConfig)
+	BindPersistentFlags(rootCmd, &rootConfig2)
 	BindPersistentFlagsKey("nested", child2Cmd, &child2Config)
 
-	output, err := executeCommand(rootCmd, "child1", "child2", "--fifth-param", "102", "--second-param", "SecondFlag")
+	output, err := executeCommand(rootCmd, "child1", "child2", "--fifth-param", "102", "--second-param", "SecondFlag", "--tenth-param", "10")
 
 	if output != "" {
 		t.Errorf("Unexpected output: %v", output)
@@ -117,6 +126,11 @@ func TestRunBoundCommand(t *testing.T) {
 		ThirdParam:  false,
 	}
 
+	rootTest2 := rootStruct2{
+		NinthParam: "Ninth",
+		TenthParam: 10,
+	}
+
 	child2Test := child2Struct{
 		FourthParam: true,
 		FifthParam:  102,
@@ -125,6 +139,10 @@ func TestRunBoundCommand(t *testing.T) {
 
 	if rootConfig != rootTest {
 		t.Errorf("\ngot:  %v\nwant: %v\n", rootConfig, rootTest)
+	}
+
+	if rootConfig2 != rootTest2 {
+		t.Errorf("\ngot:  %v\nwant: %v\n", rootConfig2, rootTest2)
 	}
 
 	if child2Config != child2Test {
