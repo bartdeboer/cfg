@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bartdeboer/cobrahooks"
 	"github.com/iancoleman/strcase"
 	"github.com/imdario/mergo"
 	homedir "github.com/mitchellh/go-homedir"
@@ -83,237 +84,97 @@ func getPtrValue(i interface{}) interface{} {
 	return rv.Interface() // Get real value of Value
 }
 
-type commandHook struct {
-	cmd  *cobra.Command
-	hook func(cmd *cobra.Command, args []string) error
+type BindOptions struct {
+	noViper  bool
+	viperKey string
 }
 
-var (
-	preRunHooks            []*commandHook
-	persistentPreRunHooks  []*commandHook
-	runHooks               []*commandHook
-	persistentPostRunHooks []*commandHook
-	postRunHooks           []*commandHook
-	helpHooks              []*commandHook
-)
+func NoViper(o *BindOptions) { o.noViper = true }
 
-// RegisterRunHookE allows to register multiple Run hooks onto the command.
-func RegisterRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
-	// Register the hook
-	runHooks = append(runHooks, &commandHook{
-		cmd:  c,
-		hook: h,
-	})
-	if c.RunE != nil {
-		return
+func ViperKey(key string) func(*BindOptions) {
+	return func(o *BindOptions) {
+		o.viperKey = key
 	}
-	c.RunE = func(cmd *cobra.Command, args []string) error {
-		// find and execute any registered Run hooks
-		for _, ch := range runHooks {
-			if ch.cmd == cmd {
-				if err := ch.hook(cmd, args); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-}
-
-// RegisterPreRunHookE allows to register multiple PreRunE hooks onto the command.
-func RegisterPreRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
-	// Register the hook
-	preRunHooks = append(preRunHooks, &commandHook{
-		cmd:  c,
-		hook: h,
-	})
-	if c.PreRunE != nil {
-		return
-	}
-	c.PreRunE = func(cmd *cobra.Command, args []string) error {
-		// find and execute any registered PreRun hooks
-		for _, ch := range preRunHooks {
-			if ch.cmd == cmd {
-				if err := ch.hook(cmd, args); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-}
-
-// RegisterPostRunHookE allows to register multiple PostRunE hooks onto the command.
-func RegisterPostRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
-	// Register the hook
-	postRunHooks = append(postRunHooks, &commandHook{
-		cmd:  c,
-		hook: h,
-	})
-	if c.PostRunE != nil {
-		return
-	}
-	c.PostRunE = func(cmd *cobra.Command, args []string) error {
-		// find and execute any registered PreRun hooks
-		for _, ch := range postRunHooks {
-			if ch.cmd == cmd {
-				if err := ch.hook(cmd, args); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-}
-
-// RegisterPersistentPreRunHookE allows to register multiple PersistentPreRunE hooks onto the command
-// ensuring all of them will be run throughout the command chain that is currently executed.
-// This method allows different parts of the code to have their own concern about attaching behavior.
-// Only hooks defined via RegisterPersistentPreRunHookE will be handled. Any other PersistentPreRunE
-// functions will be ignored ensuring the behavior to be non-intrusive.
-func RegisterPersistentPreRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
-	// Register the hook
-	persistentPreRunHooks = append(persistentPreRunHooks, &commandHook{
-		cmd:  c,
-		hook: h,
-	})
-	if c.PersistentPreRunE != nil {
-		return
-	}
-	c.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		var runChain []*commandHook
-		for p := cmd; p != nil; p = p.Parent() {
-			for _, ch := range persistentPreRunHooks {
-				// find any registered PersistentPreRun hooks and build the run chain
-				if ch.cmd == p {
-					runChain = append(runChain, &commandHook{
-						hook: ch.hook,
-					})
-				}
-			}
-		}
-		// Run the command chain hooks from parent to child
-		for i := len(runChain) - 1; i >= 0; i-- {
-			if err := runChain[i].hook(cmd, args); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-// RegisterPersistentPostRunHookE allows to register multiple PersistentPostRunE hooks onto the command
-// ensuring all of them will be run throughout the command chain that is currently executed.
-// This method allows different parts of the code to have their own concern about attaching behavior.
-// Only hooks defined via RegisterPersistentPostRunHookE will be handled. Any other PersistentPostRunE
-// functions will be ignored ensuring non-intrusive behavior.
-func RegisterPersistentPostRunHookE(c *cobra.Command, h func(cmd *cobra.Command, args []string) error) {
-	// Register the hook
-	persistentPostRunHooks = append(persistentPostRunHooks, &commandHook{
-		cmd:  c,
-		hook: h,
-	})
-	if c.PersistentPostRunE != nil {
-		return
-	}
-	c.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
-		// Walk up the command chain
-		for p := cmd; p != nil; p = p.Parent() {
-			// find and execute any registered PostRun hooks
-			for _, ch := range persistentPostRunHooks {
-				if ch.cmd == p {
-					if err := ch.hook(cmd, args); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		return nil
-	}
-}
-
-func RunPreRunHooksOnHelp(c *cobra.Command) {
-	// Check if a help hook was already registered for the command
-	for _, ch := range helpHooks {
-		if c == ch.cmd {
-			return
-		}
-	}
-	helpHooks = append(helpHooks, &commandHook{
-		cmd: c,
-	})
-	helpFunc := c.HelpFunc()
-	c.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		if cmd.PreRunE != nil {
-			cmd.PreRunE(cmd, args)
-		}
-		for p := cmd; p != nil; p = p.Parent() {
-			if p.PersistentPreRunE != nil {
-				p.PersistentPreRunE(p, args)
-				break
-			}
-		}
-		helpFunc(cmd, args)
-	})
 }
 
 // BindCobraFlags binds a Struct with a viper config when running a Cobra command.
 // Generates Cobra flags for the Struct so they can be overriden.
-func BindFlags(c *cobra.Command, rawVal interface{}) {
+func BindFlags(c *cobra.Command, rawVal interface{}, options ...func(*BindOptions)) {
+	var opts BindOptions
+	for _, option := range options {
+		option(&opts)
+	}
 	createFlags(c.Flags(), rawVal)
-	RegisterPreRunHookE(c, func(cmd *cobra.Command, args []string) error {
-		Unmarshal(rawVal)
-		setFlagDefaults(cmd.Flags(), rawVal)
+	cobrahooks.OnPreRun(c, func(cmd *cobra.Command, args []string) error {
+		fmt.Println("RUN Flags:", c.Use)
+		if !opts.noViper {
+			if opts.viperKey != "" {
+				UnmarshalKey(opts.viperKey, rawVal)
+			} else {
+				Unmarshal(rawVal)
+			}
+		}
+		setFlagDefaults(c.Flags(), rawVal)
 		return nil
-	})
-	RunPreRunHooksOnHelp(c)
+	}, cobrahooks.RunOnHelp)
 }
 
 // BindCobraFlagsKey binds a Struct with a viper config at a specific key when running a Cobra command.
 // Generates Cobra flags for the struct so they can be overriden
 func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 	createFlags(c.Flags(), rawVal)
-	RegisterPreRunHookE(c, func(cmd *cobra.Command, args []string) error {
+	cobrahooks.OnPreRun(c, func(cmd *cobra.Command, args []string) error {
+		fmt.Println("RUN FlagsKey:", c.Use)
 		UnmarshalKey(key, rawVal)
-		setFlagDefaults(cmd.Flags(), rawVal)
+		setFlagDefaults(c.Flags(), rawVal)
 		return nil
-	})
-	RunPreRunHooksOnHelp(c)
+	}, cobrahooks.RunOnHelp)
 }
 
 // BindCobraPersistentFlags persistently binds a Struct with a viper config when running a Cobra command.
 // Generates persistent flags for the struct so they can be overriden.
 // Runs the parent persistent hooks as well.
-func BindPersistentFlags(c *cobra.Command, rawVal interface{}) {
+func BindPersistentFlags(c *cobra.Command, rawVal interface{}, options ...func(*BindOptions)) {
+	var opts BindOptions
+	for _, option := range options {
+		option(&opts)
+	}
 	createFlags(c.PersistentFlags(), rawVal)
-	RegisterPersistentPreRunHookE(c, func(cmd *cobra.Command, args []string) error {
-		Unmarshal(rawVal)
-		setFlagDefaults(cmd.PersistentFlags(), rawVal)
+	cobrahooks.OnPersistentPreRun(c, func(cmd *cobra.Command, args []string) error {
+		fmt.Println("RUN PersistentFlags:", c.Use)
+		if !opts.noViper {
+			if opts.viperKey != "" {
+				UnmarshalKey(opts.viperKey, rawVal)
+			} else {
+				Unmarshal(rawVal)
+			}
+		}
+		setFlagDefaults(c.PersistentFlags(), rawVal)
 		return nil
-	})
-	RunPreRunHooksOnHelp(c)
+	}, cobrahooks.RunOnHelp)
 }
 
 // BindCobraFlagsKeyKey persistently binds a Struct with a viper config at a specific key when running a Cobra command.
 // Generates persistent flags for the struct so they can be overriden
 func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
 	createFlags(c.PersistentFlags(), rawVal)
-	RegisterPersistentPreRunHookE(c, func(cmd *cobra.Command, args []string) error {
+	cobrahooks.OnPersistentPreRun(c, func(cmd *cobra.Command, args []string) error {
+		fmt.Println("RUN PersistentFlagsKey:", c.Use)
 		UnmarshalKey(key, rawVal)
-		setFlagDefaults(cmd.PersistentFlags(), rawVal)
+		setFlagDefaults(c.PersistentFlags(), rawVal)
 		return nil
-	})
-	RunPreRunHooksOnHelp(c)
+	}, cobrahooks.RunOnHelp)
 }
 
 // BindCobraFlagsKeyKey persistently binds a Struct with a viper config at a specific array with dynamic key when running a Cobra command.
 // Generates persistent flags for the struct so they can be overriden
-func BindPersistentFlagsCollection(colKey string, keyKey string, c *cobra.Command, rawVal interface{}) {
+func BindPersistentFlagsCollection(colField string, keyField string, c *cobra.Command, rawVal interface{}) {
 	createFlags(c.PersistentFlags(), rawVal)
-	RegisterPersistentPreRunHookE(c, func(cmd *cobra.Command, args []string) error {
+	cobrahooks.OnPersistentPreRun(c, func(cmd *cobra.Command, args []string) error {
+		fmt.Println("RUN PersistentFlagsCollection:", c.Use)
 		var coll []map[string]interface{}
-		key := GetString(keyKey)
-		UnmarshalKey(colKey, &coll)
+		key := GetString(keyField)
+		UnmarshalKey(colField, &coll)
 		for i := 0; i < len(coll); i++ {
 			if val, ok := coll[i]["name"]; ok {
 				if val.(string) == key {
@@ -324,14 +185,13 @@ func BindPersistentFlagsCollection(colKey string, keyKey string, c *cobra.Comman
 					if err := mergo.MergeWithOverwrite(rawVal, curVal); err != nil {
 						return err
 					}
-					setFlagDefaults(cmd.PersistentFlags(), rawVal)
+					setFlagDefaults(c.PersistentFlags(), rawVal)
 					return nil
 				}
 			}
 		}
 		return nil
-	})
-	RunPreRunHooksOnHelp(c)
+	}, cobrahooks.RunOnHelp)
 }
 
 // setFlagDefaults takes the values of a Struct and sets them as flag defaults
