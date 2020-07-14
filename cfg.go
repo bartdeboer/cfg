@@ -85,15 +85,15 @@ func getPtrValue(i interface{}) interface{} {
 }
 
 type BindOptions struct {
-	noViper  bool
-	viperKey string
+	noViper bool
+	key     string
 }
 
 func NoViper(o *BindOptions) { o.noViper = true }
 
-func ViperKey(key string) func(*BindOptions) {
+func Key(key string) func(*BindOptions) {
 	return func(o *BindOptions) {
-		o.viperKey = key
+		o.key = key
 	}
 }
 
@@ -108,8 +108,8 @@ func BindFlags(c *cobra.Command, rawVal interface{}, options ...func(*BindOption
 	cobrahooks.OnPreRun(c, func(cmd *cobra.Command, args []string) error {
 		fmt.Println("RUN Flags:", c.Use)
 		if !opts.noViper {
-			if opts.viperKey != "" {
-				UnmarshalKey(opts.viperKey, rawVal)
+			if opts.key != "" {
+				UnmarshalKey(opts.key, rawVal)
 			} else {
 				Unmarshal(rawVal)
 			}
@@ -122,13 +122,7 @@ func BindFlags(c *cobra.Command, rawVal interface{}, options ...func(*BindOption
 // BindCobraFlagsKey binds a Struct with a viper config at a specific key when running a Cobra command.
 // Generates Cobra flags for the struct so they can be overriden
 func BindFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
-	createFlags(c.Flags(), rawVal)
-	cobrahooks.OnPreRun(c, func(cmd *cobra.Command, args []string) error {
-		fmt.Println("RUN FlagsKey:", c.Use)
-		UnmarshalKey(key, rawVal)
-		setFlagDefaults(c.Flags(), rawVal)
-		return nil
-	}, cobrahooks.RunOnHelp)
+	BindFlags(c, rawVal, Key(key))
 }
 
 // BindCobraPersistentFlags persistently binds a Struct with a viper config when running a Cobra command.
@@ -143,8 +137,8 @@ func BindPersistentFlags(c *cobra.Command, rawVal interface{}, options ...func(*
 	cobrahooks.OnPersistentPreRun(c, func(cmd *cobra.Command, args []string) error {
 		fmt.Println("RUN PersistentFlags:", c.Use)
 		if !opts.noViper {
-			if opts.viperKey != "" {
-				UnmarshalKey(opts.viperKey, rawVal)
+			if opts.key != "" {
+				UnmarshalKey(opts.key, rawVal)
 			} else {
 				Unmarshal(rawVal)
 			}
@@ -157,27 +151,84 @@ func BindPersistentFlags(c *cobra.Command, rawVal interface{}, options ...func(*
 // BindCobraFlagsKeyKey persistently binds a Struct with a viper config at a specific key when running a Cobra command.
 // Generates persistent flags for the struct so they can be overriden
 func BindPersistentFlagsKey(key string, c *cobra.Command, rawVal interface{}) {
-	createFlags(c.PersistentFlags(), rawVal)
-	cobrahooks.OnPersistentPreRun(c, func(cmd *cobra.Command, args []string) error {
-		fmt.Println("RUN PersistentFlagsKey:", c.Use)
-		UnmarshalKey(key, rawVal)
-		setFlagDefaults(c.PersistentFlags(), rawVal)
-		return nil
-	}, cobrahooks.RunOnHelp)
+	BindPersistentFlags(c, rawVal, Key(key))
 }
 
-// BindCobraFlagsKeyKey persistently binds a Struct with a viper config at a specific array with dynamic key when running a Cobra command.
-// Generates persistent flags for the struct so they can be overriden
-func BindPersistentFlagsCollection(colField string, keyField string, c *cobra.Command, rawVal interface{}) {
+type BindCollectionOptions struct {
+	selectField     string
+	selectValue     string
+	collectionField string
+	collection      *[]map[string]interface{}
+	bindTo          interface{}
+	idField         string
+}
+
+func IdField(name string) func(*BindCollectionOptions) {
+	return func(o *BindCollectionOptions) {
+		o.idField = name
+	}
+}
+
+func SelectField(name string) func(*BindCollectionOptions) {
+	return func(o *BindCollectionOptions) {
+		o.selectField = name
+	}
+}
+
+func SelectValue(value string) func(*BindCollectionOptions) {
+	return func(o *BindCollectionOptions) {
+		o.selectValue = value
+	}
+}
+
+func CollectionField(name string) func(*BindCollectionOptions) {
+	return func(o *BindCollectionOptions) {
+		o.collectionField = name
+	}
+}
+
+func Collection(collection *[]map[string]interface{}) func(*BindCollectionOptions) {
+	return func(o *BindCollectionOptions) {
+		o.collection = collection
+	}
+}
+
+func BindTo(rawVal interface{}) func(*BindCollectionOptions) {
+	return func(o *BindCollectionOptions) {
+		o.bindTo = rawVal
+	}
+}
+
+func BindCollectionItemFields(colField string, selectField string, c *cobra.Command, rawVal interface{}) {
+	BindCollectionItem(c, rawVal, CollectionField(colField), SelectField(selectField))
+}
+
+func BindCollectionItem(c *cobra.Command, rawVal interface{}, options ...func(*BindCollectionOptions)) {
+	var opts BindCollectionOptions
+	for _, option := range options {
+		option(&opts)
+	}
+	var idField = opts.idField
+	if idField == "" {
+		idField = "name"
+	}
+	var selectField = opts.selectField
+	var collField = opts.collectionField
 	createFlags(c.PersistentFlags(), rawVal)
 	cobrahooks.OnPersistentPreRun(c, func(cmd *cobra.Command, args []string) error {
 		fmt.Println("RUN PersistentFlagsCollection:", c.Use)
+		selectValue := GetString(selectField)
 		var coll []map[string]interface{}
-		key := GetString(keyField)
-		UnmarshalKey(colField, &coll)
+		if opts.collection != nil {
+			coll = *opts.collection
+		}
+		if coll == nil {
+			fmt.Println("UNMARSHALL COLLECTION:", c.Use)
+			UnmarshalKey(collField, &coll)
+		}
 		for i := 0; i < len(coll); i++ {
-			if val, ok := coll[i]["name"]; ok {
-				if val.(string) == key {
+			if val, ok := coll[i][idField]; ok {
+				if val.(string) == selectValue {
 					curVal := getPtrValue(rawVal)
 					if err := mapstructure.Decode(coll[i], rawVal); err != nil {
 						return err

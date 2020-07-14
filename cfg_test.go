@@ -195,7 +195,7 @@ func TestRunBoundCollectionCommand(t *testing.T) {
 	child1Cmd.AddCommand(child2Cmd)
 
 	BindPersistentFlags(rootCmd, &rootConfig)
-	BindPersistentFlagsCollection("collection", "CollectionSelectedItem", child2Cmd, &itemConfig)
+	BindCollectionItemFields("collection", "CollectionSelectedItem", child2Cmd, &itemConfig)
 
 	output, err := executeCommand(rootCmd, "child1", "child2", "--eighth-param", "SecondEighthFlag", "--second-param", "SecondFlag")
 
