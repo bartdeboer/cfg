@@ -15,7 +15,7 @@ import (
 	"github.com/bartdeboer/cobrahooks"
 	"github.com/iancoleman/strcase"
 	"github.com/imdario/mergo"
-	homedir "github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/go-homedir"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -325,6 +325,12 @@ var ConfigLoader = func() {
 		os.Exit(1)
 	}
 
+	curDir, err := os.Getwd()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
 	exec, err := os.Executable()
 	if err != nil {
 		fmt.Println(err)
@@ -335,7 +341,9 @@ var ConfigLoader = func() {
 
 	viper.AddConfigPath(home)
 	viper.AddConfigPath(".")
-	viper.SetConfigName("." + name)
+	viper.AddConfigPath(curDir)
+	// viper.SetConfigName("." + name)
+	viper.SetConfigName(name)
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.
