@@ -339,11 +339,15 @@ var ConfigLoader = func() {
 
 	name := strings.TrimSuffix(filepath.Base(exec), (".exe"))
 
+	// fmt.Printf("Name: %s\n", name)
+	// fmt.Printf("Home: %s\n", home)
+	// fmt.Printf("curDir: %s\n", curDir)
+
 	viper.AddConfigPath(home)
 	viper.AddConfigPath(".")
 	viper.AddConfigPath(curDir)
-	// viper.SetConfigName("." + name)
-	viper.SetConfigName(name)
+	viper.SetConfigName("." + name) // .video.yaml
+	// viper.SetConfigName(name)
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.
